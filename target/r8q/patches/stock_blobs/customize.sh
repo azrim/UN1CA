@@ -130,3 +130,14 @@ LOG_STEP_OUT
 LOG_STEP_IN "- Adding stock DesktopSystemUI"
 ADD_TO_WORK_DIR "$TARGET_FIRMWARE" "system" "system/system/priv-app/DesktopSystemUI"
 LOG_STEP_OUT
+
+LOG_STEP_IN "- Adding r9qxxx biometric blobs"
+DELETE_FROM_WORK_DIR "vendor" "bin/hw/vendor.samsung.hardware.biometrics.face@2.0-service"
+DELETE_FROM_WORK_DIR "vendor" "etc/init/vendor.samsung.hardware.biometrics.face@2.0-service.rc"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "bin/hw/vendor.samsung.hardware.biometrics.face@3.0-service"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "etc/init/vendor.samsung.hardware.biometrics.face@3.0-service.rc"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "lib/vendor.samsung.hardware.biometrics.face@2.0.so"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "lib/vendor.samsung.hardware.biometrics.face@3.0.so"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "lib64/vendor.samsung.hardware.biometrics.face@2.0.so"
+ADD_TO_WORK_DIR "r9qxxx" "vendor" "lib64/vendor.samsung.hardware.biometrics.face@3.0.so"
+LOG_STEP_OUT
