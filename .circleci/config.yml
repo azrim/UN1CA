@@ -18,10 +18,19 @@ jobs:
       - checkout
 
       - run:
-          name: Initialize Git Submodules
+          name: Checkout Code (Shallow & Fast)
           command: |
+            # 1. Prevent SSH errors
+            mkdir -p ~/.ssh
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+            # 2. Clone only the latest commit (Depth 1)
+            # This ignores the heavy history causing your timeout
+            git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
+
+            # 3. Initialize Submodules (Also Shallow)
             git submodule sync
-            git submodule update --init --recursive
+            git submodule update --init --recursive --depth 1
 
       # --- Dependencies ---
       - run:
@@ -29,12 +38,13 @@ jobs:
           command: |
             sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq \
+              build-essential pkg-config \
               7zip attr ccache clang ffmpeg git curl unzip \
               libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
               libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
               python3 python3-venv python-is-python3 openjdk-17-jdk \
               lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
-              libfmt-dev
+              libfmt-dev liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev
 
       # --- Kernel Modules ---
       - run:
