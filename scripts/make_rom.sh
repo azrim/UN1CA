@@ -138,19 +138,63 @@ if $BUILD_ROM; then
     if [ -d "$APKTOOL_DIR" ]; then
         LOG_STEP_IN true "Building APKs/JARs"
 
+        local FAILED_BUILDS=()
+        local BUILD_PIDS=()
+        local BUILD_FILES=()
+        local BUILD_LOGS=()
+        local TMP_LOG_DIR
+
+        TMP_LOG_DIR="$(mktemp -d)" || exit 1
+        trap "rm -rf '$TMP_LOG_DIR'" EXIT
+
         while IFS= read -r f; do
             f="${f/$APKTOOL_DIR\//}"
             PARTITION="$(cut -d "/" -f 1 -s <<< "$f")"
+            local LOG_FILE="$TMP_LOG_DIR/$(basename "$f").log"
+            
             if [[ "$PARTITION" == "system" ]]; then
-                "$SRC_DIR/scripts/apktool.sh" b "system" "$f" &
+                BUILD_FILES+=("system/$f")
+                "$SRC_DIR/scripts/apktool.sh" b "system" "$f" > "$LOG_FILE" 2>&1 &
             else
-                "$SRC_DIR/scripts/apktool.sh" b "$PARTITION" "$(cut -d "/" -f 2- -s <<< "$f")" &
+                BUILD_FILES+=("$PARTITION/$(cut -d "/" -f 2- -s <<< "$f")")
+                "$SRC_DIR/scripts/apktool.sh" b "$PARTITION" "$(cut -d "/" -f 2- -s <<< "$f")" > "$LOG_FILE" 2>&1 &
             fi
+            BUILD_PIDS+=($!)
+            BUILD_LOGS+=("$LOG_FILE")
         done < <(find "$APKTOOL_DIR" -type d \( -name "*.apk" -o -name "*.jar" \))
 
-        # shellcheck disable=SC2046
-        wait $(jobs -p) || exit 1
+        # Wait for all jobs and collect failures
+        local i=0
+        for pid in "${BUILD_PIDS[@]}"; do
+            if ! wait "$pid"; then
+                FAILED_BUILDS+=("${BUILD_FILES[$i]}")
+            fi
+            ((i++))
+        done
 
+        if [ "${#FAILED_BUILDS[@]}" -ne 0 ]; then
+            LOGE "The following APKs/JARs failed to build:"
+            i=0
+            for f in "${BUILD_FILES[@]}"; do
+                for failed in "${FAILED_BUILDS[@]}"; do
+                    if [[ "$f" == "$failed" ]]; then
+                        LOGE "  - $f"
+                        echo ""
+                        echo "Error output for $f:"
+                        echo "----------------------------------------"
+                        cat "${BUILD_LOGS[$i]}"
+                        echo "----------------------------------------"
+                        echo ""
+                        break
+                    fi
+                done
+                ((i++))
+            done
+            rm -rf "$TMP_LOG_DIR"
+            exit 1
+        fi
+
+        rm -rf "$TMP_LOG_DIR"
         LOG_STEP_OUT
     fi
 

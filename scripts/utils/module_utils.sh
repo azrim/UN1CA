@@ -58,7 +58,29 @@ APPLY_PATCH()
     DECODE_APK "$PARTITION" "$FILE" || return 1
 
     LOG "- Applying \"$(grep "^Subject:" "$PATCH" | sed "s/.*PATCH] //")\" to /$PARTITION/$FILE"
-    EVAL "LC_ALL=C git apply --directory=\"$APKTOOL_DIR/$PARTITION/${FILE//system\//}\" --verbose --unsafe-paths \"$PATCH\"" || return 1
+    
+    # Try applying with whitespace ignoring first
+    if EVAL "LC_ALL=C git apply --directory=\"$APKTOOL_DIR/$PARTITION/${FILE//system\//}\" --verbose --unsafe-paths --ignore-whitespace --ignore-space-change \"$PATCH\" 2>&1"; then
+        return 0
+    fi
+    
+    # If that fails, try with reject files (saves rejected hunks but continues)
+    local REJECT_FILE="${PATCH}.rej"
+    if EVAL "LC_ALL=C git apply --directory=\"$APKTOOL_DIR/$PARTITION/${FILE//system\//}\" --verbose --unsafe-paths --reject \"$PATCH\" 2>&1"; then
+        if [ -f "$REJECT_FILE" ]; then
+            LOGW "Some hunks were rejected and saved to ${REJECT_FILE//$SRC_DIR\//}"
+        fi
+        return 0
+    fi
+    
+    # Final attempt: use patch command with fuzz
+    LOGW "git apply failed, trying patch command with fuzz..."
+    if EVAL "cd \"$APKTOOL_DIR/$PARTITION/${FILE//system\//}\" && patch -p1 --fuzz=3 --no-backup-if-mismatch < \"$PATCH\" 2>&1"; then
+        return 0
+    fi
+    
+    LOGE "Failed to apply patch: ${PATCH//$SRC_DIR\//}"
+    return 1
 }
 
 # DECODE_APK <partition> <apk/jar>

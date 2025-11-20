@@ -1,14 +1,24 @@
 [ ! -f "$WORK_DIR/kernel/boot.img" ] && ABORT "File not found: ${WORK_DIR//$SRC_DIR\//}/kernel/boot.img"
 
+# Check if file is not empty
+[ ! -s "$WORK_DIR/kernel/boot.img" ] && ABORT "boot.img is empty or corrupted"
+
+# Check boot image magic (Android boot image starts with "ANDROID!")
+BOOT_MAGIC="$(READ_BYTES_AT "$WORK_DIR/kernel/boot.img" "0" "8" | xxd -r -p)"
+if [[ "$BOOT_MAGIC" != "ANDROID!" ]]; then
+    ABORT "Invalid boot image magic. Expected 'ANDROID!', got: $(xxd -l 8 "$WORK_DIR/kernel/boot.img" | cut -d' ' -f2-9)"
+fi
+
 LOG "- Extracting boot.img"
 
 [ -d "$TMP_DIR" ] && EVAL "rm -rf \"$TMP_DIR\""
 EVAL "mkdir -p \"$TMP_DIR\""
 EVAL "cp -a \"$WORK_DIR/kernel/boot.img\" \"$TMP_DIR/boot.img\""
 
-MKBOOTIMG_ARGS="$(unpack_bootimg --boot_img "$TMP_DIR/boot.img" --out "$TMP_DIR/out" --format mkbootimg 2>&1)"
+# Run unpack_bootimg and capture both output and errors
+MKBOOTIMG_ARGS="$(unpack_bootimg --boot_img "$TMP_DIR/boot.img" --out "$TMP_DIR/out" --format mkbootimg 2>&1)" || ABORT "Failed to extract boot.img\n\n$MKBOOTIMG_ARGS"
 
-[ ! -f "$TMP_DIR/out/kernel" ] && ABORT "Failed to extract boot.img\n\n$MKBOOTIMG_ARGS"
+[ ! -f "$TMP_DIR/out/kernel" ] && ABORT "Failed to extract boot.img - kernel file not found\n\n$MKBOOTIMG_ARGS"
 
 GZ_COMPRESSED=false
 [[ "$(READ_BYTES_AT "$TMP_DIR/out/kernel" "0" "2")" == "8b1f" ]] && GZ_COMPRESSED=true
@@ -50,7 +60,7 @@ fi
 
 LOG "- Repacking boot.img"
 
-EVAL "mkbootimg $MKBOOTIMG_ARGS -o \"$TMP_DIR/new-boot.img\""
+EVAL "mkbootimg $MKBOOTIMG_ARGS -o \"$TMP_DIR/new-boot.img\"" || ABORT "Failed to repack boot.img"
 echo -n "SEANDROIDENFORCE" >> "$TMP_DIR/new-boot.img"
 EVAL "mv -f \"$TMP_DIR/new-boot.img\" \"$WORK_DIR/kernel/boot.img\""
 
