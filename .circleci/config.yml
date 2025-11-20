@@ -10,23 +10,35 @@ jobs:
       DEBIAN_FRONTEND: noninteractive
 
     steps:
-      # --- PRECHECKOUT: install git + ssh for real checkout ---
+      # -----------------------------------------------------
+      # PRECHECKOUT: install git + ssh and trust GitHub host
+      # -----------------------------------------------------
       - run:
-          name: Install Git & SSH (required for checkout)
+          name: Install Git & SSH
           command: |
             apt-get update
             apt-get install -y git openssh-client
 
-      # --- FAST CHECKOUT ---
       - run:
-          name: Checkout (shallow, faster)
+          name: Add GitHub to known_hosts
+          command: |
+            mkdir -p ~/.ssh
+            ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      # -----------------------------------------------------
+      # FAST CHECKOUT (shallow clone + shallow submodules)
+      # -----------------------------------------------------
+      - run:
+          name: Checkout repository
           command: |
             git clone --depth=1 --branch "$CIRCLE_BRANCH" "$CIRCLE_REPOSITORY_URL" .
             git submodule update --init --recursive --depth 1 || true
 
-      # --- INSTALL BUILD ENVIRONMENT ---
+      # -----------------------------------------------------
+      # BUILD ENVIRONMENT SETUP
+      # -----------------------------------------------------
       - run:
-          name: Set up build environment
+          name: Install build dependencies
           command: |
             apt-get update
             apt-get install -yq \
@@ -35,35 +47,34 @@ jobs:
               libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
               curl unzip wget python3 python3-venv openjdk-17-jdk
 
-            # Optional: kernel modules might not load inside Docker; ignore failures
+            # kernel modules may fail inside docker; ignore
             modprobe erofs || true
             modprobe f2fs || true
 
             git config --global user.name "circleci-bot"
             git config --global user.email "bot@example.com"
 
-      # --- BUILD DEPENDENCIES ---
+      # -----------------------------------------------------
+      # BUILD SEQUENCE (same as GitHub Actions)
+      # -----------------------------------------------------
       - run:
           name: Build dependencies
           command: |
             source ./buildenv.sh r8q
             ./scripts/build_dependencies.sh
 
-      # --- DOWNLOAD FIRMWARE ---
       - run:
-          name: Download stock firmware
+          name: Download firmware
           command: |
             source ./buildenv.sh r8q
             ./scripts/download_fw.sh
 
-      # --- EXTRACT FIRMWARE ---
       - run:
           name: Extract firmware
           command: |
             source ./buildenv.sh r8q
             ./scripts/extract_fw.sh
 
-      # --- BUILD ROM ---
       - run:
           name: Build ROM
           no_output_timeout: 90m
@@ -71,7 +82,9 @@ jobs:
             source ./buildenv.sh r8q
             ./scripts/make_rom.sh --no-rom-zip
 
-      # --- SAVE BUILD OUTPUT ---
+      # -----------------------------------------------------
+      # ARTIFACT UPLOAD
+      # -----------------------------------------------------
       - store_artifacts:
           path: out/
           destination: rom_output
