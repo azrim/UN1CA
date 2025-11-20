@@ -1,105 +1,105 @@
 version: 2.1
 
 executors:
-  ubuntu-builder:
-    docker:
-      - image: cimg/base:stable   # Ubuntu-based CircleCI image
-    resource_class: xlarge        # firmware builds are heavy; downgrade if needed
+  vm-builder:
+    machine:
+      # Use a standard Ubuntu VM. This allows kernel access for mounting images.
+      image: ubuntu-2204:current
+    # Downgraded from 'xlarge' to 'large' to fit your plan.
+    # If 'large' fails, try 'medium' (but it will be slower).
+    resource_class: large
     environment:
       SRC_DIR: /home/circleci/project
 
 jobs:
   build-r8q:
-    executor: ubuntu-builder
+    executor: vm-builder
     steps:
       - checkout
 
-      # --- Dependencies & environment ---
+      # --- Dependencies ---
       - run:
-          name: Install build dependencies
+          name: Install System Dependencies
           command: |
             sudo apt-get update
+            # Installing python-is-python3 and lz4 is critical for Samsung builds
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq \
-              7zip attr ccache clang ffmpeg \
+              7zip attr ccache clang ffmpeg git curl unzip \
               libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
               libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
-              git curl unzip python3 python3-venv openjdk-17-jdk
+              python3 python3-venv python-is-python3 openjdk-17-jdk \
+              lz4 liblz4-tool aria2 android-sdk-libsparse-utils
 
+      # --- Kernel Modules ---
       - run:
-          name: Kernel modules & git identity
+          name: Load Filesystem Modules
           command: |
-            sudo modprobe erofs || true
-            sudo modprobe f2fs || true
+            # These commands FAIL in Docker, but pass in 'machine' executor
+            sudo modprobe erofs || echo "Warning: EROFS module not found"
+            sudo modprobe f2fs || echo "Warning: F2FS module not found"
+            sudo modprobe loop || true
+
+      # --- Git Configuration ---
+      - run:
+          name: Configure Git
+          command: |
             git config --global user.name "circleci-bot"
             git config --global user.email "circleci-bot@example.com"
+            # Prevent "dubious ownership" errors
+            git config --global --add safe.directory "$SRC_DIR"
 
-      # --- Optional UN1CA signing keys (set env vars in CircleCI project if you use them) ---
-      - run:
-          name: Install UN1CA signing keys (optional)
-          command: |
-            if [ -n "${PLATFORM_KEY_PK8:-}" ] && [ -n "${PLATFORM_KEY_PEM:-}" ]; then
-              mkdir -p security
-              echo -n "$PLATFORM_KEY_PK8" | base64 -d > security/unica_platform.pk8
-              echo -n "$PLATFORM_KEY_PEM" | base64 -d > security/unica_platform.x509.pem
-            else
-              echo "PLATFORM_KEY_* not set; build will use AOSP testkeys."
-            fi
-
-      # --- Cache heavy toolchain in out/tools ---
+      # --- Caching ---
       - restore_cache:
-          name: Restore tools cache (out/tools)
+          name: Restore tools cache
           keys:
-            - v1-un1ca-tools-{{ checksum "external/make.sh" }}-{{ checksum "scripts/utils/build_utils.sh" }}
-            - v1-un1ca-tools-
+            - v3-un1ca-tools-{{ checksum "scripts/utils/build_utils.sh" }}
 
       - run:
-          name: Build dependencies (r8q)
+          name: Build Dependencies
           command: |
             bash -lc '
-              cd "$SRC_DIR"
               source ./buildenv.sh r8q
               ./scripts/build_dependencies.sh
             '
 
       - save_cache:
-          name: Save tools cache (out/tools)
-          key: v1-un1ca-tools-{{ checksum "external/make.sh" }}-{{ checksum "scripts/utils/build_utils.sh" }}
+          name: Save tools cache
+          key: v3-un1ca-tools-{{ checksum "scripts/utils/build_utils.sh" }}
           paths:
             - out/tools
 
-      # --- Firmware download / extract / build ---
+      # --- Build Process ---
       - run:
-          name: Download stock firmwares (r8q)
+          name: Download Firmware
+          no_output_timeout: 30m
           command: |
-            bash -lc '
-              cd "$SRC_DIR"
-              source ./buildenv.sh r8q
-              ./scripts/download_fw.sh
-            '
+            bash -lc 'source ./buildenv.sh r8q && ./scripts/download_fw.sh'
 
       - run:
-          name: Extract stock firmwares (r8q)
+          name: Extract Firmware
           command: |
-            bash -lc '
-              cd "$SRC_DIR"
-              source ./buildenv.sh r8q
-              ./scripts/extract_fw.sh
-            '
+            bash -lc 'source ./buildenv.sh r8q && ./scripts/extract_fw.sh'
 
       - run:
-          name: Build ROM (r8q, no zip)
+          name: Build ROM
+          no_output_timeout: 60m
           command: |
-            bash -lc '
-              cd "$SRC_DIR"
-              source ./buildenv.sh r8q
-              ./scripts/make_rom.sh --no-rom-zip
-            '
+            # Ensure we skip the heavy zip compression to save resources
+            bash -lc 'source ./buildenv.sh r8q && ./scripts/make_rom.sh --no-rom-zip'
 
       # --- Artifacts ---
+      - run:
+          name: Prepare Artifacts
+          command: |
+            mkdir -p /tmp/artifacts
+            # Copy only the final images to upload (saves time/bandwidth)
+            find out/ -name "*.img" -exec cp {} /tmp/artifacts/ \;
+            find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
+
       - store_artifacts:
-          name: Upload build artifacts
-          path: out
-          destination: out
+          name: Upload ROM Images
+          path: /tmp/artifacts
+          destination: rom_build
 
 workflows:
   build-r8q-workflow:
