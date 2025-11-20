@@ -13,6 +13,7 @@ system/lib/libSemanticMap_v1.camera.samsung.so
 system/lib/libSlowShutter-core.so
 system/lib/libaifrc.aidl.quram.so
 system/lib/libaifrcInterface.camera.samsung.so
+system/lib/libgpuss_wrapper.so
 system/lib/libmcaimegpu.samsung.so
 system/lib/vendor.samsung.hardware.frcmc-V1-ndk.so
 system/lib64/FrcMcWrapper.so
@@ -20,6 +21,7 @@ system/lib64/libAEBHDR_wrapper.camera.samsung.so
 system/lib64/libAIQSolution_MPISingleRGB40.camera.samsung.so
 system/lib64/libBestPhoto.camera.samsung.so
 system/lib64/libDocDeblur.camera.samsung.so
+system/lib64/libDocDeblur.enhanceX.samsung.so
 system/lib64/libDocObjectRemoval.camera.samsung.so
 system/lib64/libDocObjectRemoval.enhanceX.samsung.so
 system/lib64/libDualCamBokehCapture.camera.samsung.so
@@ -43,6 +45,7 @@ system/lib64/libarcsoft_single_cam_glasses_seg.so
 system/lib64/libdualcam_refocus_image.so
 system/lib64/libdvs.camera.samsung.so
 system/lib64/libfrtracking_engine.arcsoft.so
+system/lib64/libgpuss_wrapper.so
 system/lib64/libhigh_dynamic_range_bokeh.so
 system/lib64/libhybridHDR_wrapper.camera.samsung.so
 system/lib64/libhybrid_high_dynamic_range.arcsoft.so
@@ -77,6 +80,7 @@ system/lib64/libImageTagger.camera.samsung.so
 system/lib64/libMultiFrameProcessing30.camera.samsung.so
 system/lib64/libMultiFrameProcessing30.snapwrapper.camera.samsung.so
 system/lib64/libMultiFrameProcessing30Tuning.camera.samsung.so
+system/lib64/libMyFilter.camera.samsung.so
 system/lib64/libPortraitDistortionCorrection.arcsoft.so
 system/lib64/libPortraitDistortionCorrectionCali.arcsoft.so
 system/lib64/libUltraWideDistortionCorrection.camera.samsung.so
@@ -99,11 +103,6 @@ done
 {
     echo "libLttEngine.camera.samsung.so"
 } >> "$WORK_DIR/system/system/etc/public.libraries-camera.samsung.txt"
-
-LOG_STEP_IN "- Fixing Studio Video Editor"
-ADD_TO_WORK_DIR "a36xqnaxx" "system" "system/lib64/libMyFilter.camera.samsung.so" 0 0 644 "u:object_r:system_file:s0"
-ADD_TO_WORK_DIR "a36xqnaxx" "system" "system/lib64/libtflite2.myfilters.camera.samsung.so" 0 0 644 "u:object_r:system_file:s0"
-LOG_STEP_OUT
 
 echo "Fix AI Photo Editor"
 cp -a --preserve=all \

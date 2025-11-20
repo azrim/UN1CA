@@ -15,7 +15,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #
 
-# Debloat list for Galaxy S20 FE (Qualcomm) (r8q)
+# Debloat list for Galaxy S20 FE (Snapdragon) (r8q)
 # - Add entries inside the specific partition containing that file (<PARTITION>_DEBLOAT+="")
 # - DO NOT add the partition name at the start of any entry (eg. "/system/dpolicy_system")
 # - DO NOT add a slash at the start of any entry (eg. "/dpolicy_system")
@@ -76,6 +76,7 @@ framework/com.qti.location.sdk.jar
 framework/org.carconnectivity.android.digitalkey.rangingintent.jar
 framework/org.carconnectivity.android.digitalkey.secureelement.jar
 lib/libqcc.so
+lib/libqcc_file_agent_sys.so
 lib/libqccdme.so
 lib/libqccfileservice.so
 lib/vendor.qti.hardware.qccsyshal@1.0.so
@@ -86,6 +87,7 @@ lib/vendor.qti.hardware.trustedui@1.1.so
 lib/vendor.qti.hardware.trustedui@1.2.so
 lib/vendor.qti.qccvndhal_aidl-V1-ndk.so
 lib64/libqcc.so
+lib64/libqcc_file_agent_sys.so
 lib64/libqccdme.so
 lib64/libqccfileservice.so
 lib64/vendor.qti.hardware.qccsyshal@1.0.so
