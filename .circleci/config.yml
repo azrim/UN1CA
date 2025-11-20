@@ -12,6 +12,11 @@ jobs:
   build-r8q:
     executor: vm-builder
     steps:
+      # 1. Restore cache (git submodules + dependencies)
+      - restore_cache:
+          key: r8q-cache-{{ .Branch }}-{{ checksum "scripts/build_dependencies.sh" }}
+
+      # 2. Fresh checkout
       - run:
           name: Checkout Code
           command: |
@@ -21,51 +26,47 @@ jobs:
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
             git submodule sync
             git submodule update --init --recursive --depth 1
+            git config --global --add safe.directory "*"
 
+      # 3. Pull prebuilt Docker image (already has all deps)
       - run:
-          name: Build in Ubuntu 24.04 (Docker)
+          name: Pull Prebuilt Android Build Image
+          command: |
+            docker pull ghcr.io/yourname/android-rom-base:latest
+
+      # 4. ROM build using prebuilt image
+      - run:
+          name: Build ROM (fast)
           no_output_timeout: 60m
           command: |
-            docker pull ubuntu:24.04
+            docker run --privileged --rm \
+              -v $(pwd):/work -w /work \
+              ghcr.io/yourname/android-rom-base:latest \
+              bash -c '
+                git config --global user.name "circleci-bot"
+                git config --global user.email "bot@example.com"
 
-            docker run --privileged --rm -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
+                # Force bundled fmt
+                sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh
 
-              # A. Install Dependencies
-              # Note: We REMOVE libfmt-dev to prevent conflicts
-              apt-get update && \
-              DEBIAN_FRONTEND=noninteractive apt-get install -yq \
-                sudo git curl unzip 7zip attr ccache clang ffmpeg cmake pkg-config \
-                libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
-                libzstd-dev lld protobuf-compiler webp \
-                python3 python3-venv python-is-python3 openjdk-17-jdk \
-                lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
-                erofs-utils f2fs-tools \
-                liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev && \
+                source ./buildenv.sh r8q
 
-              # B. Configure Git
-              git config --global user.name "circleci-bot" && \
-              git config --global user.email "bot@example.com" && \
-              git config --global --add safe.directory "*" && \
+                ./scripts/build_dependencies.sh
+                ./scripts/download_fw.sh
+                ./scripts/extract_fw.sh
+                ./scripts/make_rom.sh --no-rom-zip
 
-              # C. [CRITICAL FIX] Force the script to use BUNDLED fmt library
-              # This switches the flag from OFF to ON in the build script
-              sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh && \
+                chmod -R 777 out/
+              '
 
-              # D. Build Dependencies
-              source ./buildenv.sh r8q && \
-              ./scripts/build_dependencies.sh && \
+      # 5. Save cache after dependencies built
+      - save_cache:
+          key: r8q-cache-{{ .Branch }}-{{ checksum "scripts/build_dependencies.sh" }}
+          paths:
+            - build/.ccache
+            - .git/modules
 
-              # E. Download & Extract Firmware
-              ./scripts/download_fw.sh && \
-              ./scripts/extract_fw.sh && \
-
-              # F. Compile ROM
-              ./scripts/make_rom.sh --no-rom-zip && \
-
-              # G. Fix permissions
-              chmod -R 777 out/
-            '
-
+      # 6. Extract artifacts
       - run:
           name: Prepare Artifacts
           command: |
