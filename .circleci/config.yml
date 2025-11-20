@@ -3,122 +3,104 @@ version: 2.1
 executors:
   vm-builder:
     machine:
-      # Use a standard Ubuntu VM. This allows kernel access for mounting images.
       image: ubuntu-2204:current
-    # Downgraded from 'xlarge' to 'large' to fit your plan.
-    # If 'large' fails, try 'medium' (but it will be slower).
     resource_class: large
     environment:
       SRC_DIR: /home/circleci/project
+      _JAVA_OPTIONS: "-Xmx4g"
+      USE_CCACHE: 1
+      CCACHE_DIR: /home/circleci/.ccache
 
 jobs:
   build-r8q:
     executor: vm-builder
     steps:
       - run:
-          name: Checkout Code (Shallow & Fast)
+          name: Checkout Code (Shallow)
           command: |
-            # 1. Prevent SSH errors
+            rm -rf ./* ./.??*
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-            # 2. Clone only the latest commit (Depth 1)
-            # This ignores the heavy history causing your timeout
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
-
-            # 3. Initialize Submodules (Also Shallow)
             git submodule sync
             git submodule update --init --recursive --depth 1
 
-      # --- Dependencies ---
       - run:
           name: Install System Dependencies
           command: |
             sudo apt-get update
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq \
-              build-essential pkg-config \
+              build-essential pkg-config cmake \
               7zip attr ccache clang ffmpeg git curl unzip \
               libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
-              libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
+              libzstd-dev linux-modules-extra-$(uname -r) lld webp \
               python3 python3-venv python-is-python3 openjdk-17-jdk \
               lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
-              libfmt-dev liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev
+              liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev
 
-            # Hack to fix "proto3 optional fields" error on Ubuntu 22.04
-            # We rename the real compiler and create a wrapper that always adds the required flag
-            sudo mv /usr/bin/protoc /usr/bin/protoc.real
-            echo '#!/bin/bash' | sudo tee /usr/bin/protoc
-            echo 'exec /usr/bin/protoc.real --experimental_allow_proto3_optional "$@"' | sudo tee -a /usr/bin/protoc
-            sudo chmod +x /usr/bin/protoc
-
-      # --- Kernel Modules ---
+      # [NEW STEP] Manually install newer tools needed for Android source
       - run:
-          name: Load Filesystem Modules
+          name: Install Modern Dependencies (Protobuf & Fmt)
           command: |
-            # These commands FAIL in Docker, but pass in 'machine' executor
-            sudo modprobe erofs || echo "Warning: EROFS module not found"
-            sudo modprobe f2fs || echo "Warning: F2FS module not found"
-            sudo modprobe loop || true
+            # 1. Install Protoc 25.1 (Fixes "optional fields" error)
+            echo "Installing Protoc 25.1..."
+            curl -LO https://github.com/protocolbuffers/protobuf/releases/download/v25.1/protoc-25.1-linux-x86_64.zip
+            sudo unzip -o protoc-25.1-linux-x86_64.zip -d /usr/local bin/protoc
+            sudo unzip -o protoc-25.1-linux-x86_64.zip -d /usr/local 'include/*'
+            sudo chmod +x /usr/local/bin/protoc
 
-      # --- Git Configuration ---
-      - run:
-          name: Configure Git
-          command: |
-            git config --global user.name "circleci-bot"
-            git config --global user.email "circleci-bot@example.com"
-            # Prevent "dubious ownership" errors
-            git config --global --add safe.directory "$SRC_DIR"
+            # 2. Compile fmt 9.1.0 (Fixes "fmt/std.h not found" error)
+            echo "Compiling libfmt 9.1.0..."
+            git clone --depth 1 --branch 9.1.0 https://github.com/fmtlib/fmt.git
+            cd fmt
+            mkdir build && cd build
+            cmake -DCMAKE_POSITION_INDEPENDENT_CODE=TRUE -DFMT_TEST=OFF ..
+            make -j$(nproc)
+            sudo make install
+            cd ../.. && rm -rf fmt
 
-      # --- Caching ---
       - restore_cache:
-          name: Restore tools cache
+          name: Restore Build Cache
           keys:
-            - v3-un1ca-tools-{{ checksum "scripts/utils/build_utils.sh" }}
+            - v5-cache-{{ checksum "scripts/utils/build_utils.sh" }}-{{ checksum "external/android-tools/CMakeLists.txt" }}
 
       - run:
           name: Build Dependencies
           command: |
-            bash -lc '
-              source ./buildenv.sh r8q
-              ./scripts/build_dependencies.sh
-            '
+            export PATH="/usr/lib/ccache:$PATH"
+            export MAKEFLAGS="-j$(nproc)"
+            bash -lc 'source ./buildenv.sh r8q && ./scripts/build_dependencies.sh'
 
       - save_cache:
-          name: Save tools cache
-          key: v3-un1ca-tools-{{ checksum "scripts/utils/build_utils.sh" }}
+          name: Save Build Cache
+          key: v5-cache-{{ checksum "scripts/utils/build_utils.sh" }}-{{ checksum "external/android-tools/CMakeLists.txt" }}
           paths:
             - out/tools
+            - out/host
+            - /home/circleci/.ccache
 
-      # --- Build Process ---
       - run:
-          name: Download Firmware
-          no_output_timeout: 30m
+          name: Download & Extract Firmware
+          no_output_timeout: 40m
           command: |
             bash -lc 'source ./buildenv.sh r8q && ./scripts/download_fw.sh'
-
-      - run:
-          name: Extract Firmware
-          command: |
             bash -lc 'source ./buildenv.sh r8q && ./scripts/extract_fw.sh'
 
       - run:
           name: Build ROM
           no_output_timeout: 60m
           command: |
-            # Ensure we skip the heavy zip compression to save resources
             bash -lc 'source ./buildenv.sh r8q && ./scripts/make_rom.sh --no-rom-zip'
 
-      # --- Artifacts ---
       - run:
           name: Prepare Artifacts
           command: |
             mkdir -p /tmp/artifacts
-            # Copy only the final images to upload (saves time/bandwidth)
             find out/ -name "*.img" -exec cp {} /tmp/artifacts/ \;
             find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
 
       - store_artifacts:
-          name: Upload ROM Images
+          name: Upload ROM
           path: /tmp/artifacts
           destination: rom_build
 
