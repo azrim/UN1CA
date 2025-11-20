@@ -7,45 +7,38 @@ executors:
     resource_class: large
     environment:
       SRC_DIR: /home/circleci/project
+      DEBIAN_FRONTEND: noninteractive
 
 jobs:
   prepare-env:
     executor: vm-builder
     steps:
+      # Restore apt cache
       - restore_cache:
-          key: apt-cache-{{ checksum "apt-packages.txt" }}
+          key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
 
       - run:
-          name: Checkout Code
+          name: Checkout Code (clean but keep tracked files)
           command: |
-            rm -rf ./* ./.??*
-            mkdir -p ~/.ssh
-            ssh-keyscan github.com >> ~/.ssh/known_hosts
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
+            git submodule sync
             git submodule update --init --recursive --depth 1
             git config --global --add safe.directory "*"
 
       - run:
-          name: Install APT Dependencies (cached)
+          name: Install APT Dependencies on Machine
           command: |
-            docker pull ubuntu:24.04
-            mkdir -p /home/circleci/apt-cache /home/circleci/apt-lib
+            sudo apt-get update
+            xargs -a .circleci/apt-packages.txt sudo apt-get install -yq
 
-            docker run --privileged --rm \
-              -v /home/circleci/apt-cache:/var/cache/apt \
-              -v /home/circleci/apt-lib:/var/lib/apt \
-              -v $(pwd):/work -w /work \
-              ubuntu:24.04 bash -c "
-                apt-get update
-                DEBIAN_FRONTEND=noninteractive apt-get install -yq \$(cat apt-packages.txt)
-              "
-
+      # Apt cache saved ONLY if apt install succeeded
       - save_cache:
-          key: apt-cache-{{ checksum "apt-packages.txt" }}
+          key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
           paths:
-            - /home/circleci/apt-cache
-            - /home/circleci/apt-lib
+            - /var/cache/apt
+            - /var/lib/apt
 
+      # Persist entire workspace to next job
       - persist_to_workspace:
           root: .
           paths:
@@ -58,29 +51,26 @@ jobs:
           at: .
 
       - run:
-          name: Build ROM (fresh run)
-          no_output_timeout: 60m
+          name: Setup Environment
           command: |
-            docker run --privileged --rm \
-              -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
-                git config --global user.name "circleci-bot"
-                git config --global user.email "bot@example.com"
+            git config --global user.name "circleci-bot"
+            git config --global user.email "bot@example.com"
+            sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh
+            source ./buildenv.sh r8q
 
-                sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh
+      - run:
+          name: Build ROM (Fresh)
+          no_output_timeout: 90m
+          command: |
+            ./scripts/build_dependencies.sh
+            ./scripts/download_fw.sh
+            ./scripts/extract_fw.sh
+            ./scripts/make_rom.sh --no-rom-zip
+            chmod -R 777 out/
 
-                source ./buildenv.sh r8q
-
-                ./scripts/build_dependencies.sh
-                ./scripts/download_fw.sh
-                ./scripts/extract_fw.sh
-                ./scripts/make_rom.sh --no-rom-zip
-
-                chmod -R 777 out/
-              '
-
-      # this ONLY runs if the job was successful
+      # This only saves if ROM build succeeds
       - save_cache:
-          key: build-cache-r8q-{{ .Revision }}
+          key: build-cache-{{ .Revision }}
           paths:
             - out/
 
