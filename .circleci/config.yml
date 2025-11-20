@@ -17,6 +17,12 @@ jobs:
     steps:
       - checkout
 
+      - run:
+          name: Initialize Git Submodules
+          command: |
+            git submodule sync
+            git submodule update --init --recursive
+
       # --- Dependencies ---
       - run:
           name: Install System Dependencies
