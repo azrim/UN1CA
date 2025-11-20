@@ -1,0 +1,107 @@
+version: 2.1
+
+executors:
+  ubuntu-builder:
+    docker:
+      - image: cimg/base:stable   # Ubuntu-based CircleCI image
+    resource_class: xlarge        # firmware builds are heavy; downgrade if needed
+    environment:
+      SRC_DIR: /home/circleci/project
+
+jobs:
+  build-r8q:
+    executor: ubuntu-builder
+    steps:
+      - checkout
+
+      # --- Dependencies & environment ---
+      - run:
+          name: Install build dependencies
+          command: |
+            sudo apt-get update
+            DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq \
+              7zip attr ccache clang ffmpeg \
+              libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
+              libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
+              git curl unzip python3 python3-venv openjdk-17-jdk
+
+      - run:
+          name: Kernel modules & git identity
+          command: |
+            sudo modprobe erofs || true
+            sudo modprobe f2fs || true
+            git config --global user.name "circleci-bot"
+            git config --global user.email "circleci-bot@example.com"
+
+      # --- Optional UN1CA signing keys (set env vars in CircleCI project if you use them) ---
+      - run:
+          name: Install UN1CA signing keys (optional)
+          command: |
+            if [ -n "${PLATFORM_KEY_PK8:-}" ] && [ -n "${PLATFORM_KEY_PEM:-}" ]; then
+              mkdir -p security
+              echo -n "$PLATFORM_KEY_PK8" | base64 -d > security/unica_platform.pk8
+              echo -n "$PLATFORM_KEY_PEM" | base64 -d > security/unica_platform.x509.pem
+            else
+              echo "PLATFORM_KEY_* not set; build will use AOSP testkeys."
+            fi
+
+      # --- Cache heavy toolchain in out/tools ---
+      - restore_cache:
+          name: Restore tools cache (out/tools)
+          keys:
+            - v1-un1ca-tools-{{ checksum "external/make.sh" }}-{{ checksum "scripts/utils/build_utils.sh" }}
+            - v1-un1ca-tools-
+
+      - run:
+          name: Build dependencies (r8q)
+          command: |
+            bash -lc '
+              cd "$SRC_DIR"
+              source ./buildenv.sh r8q
+              ./scripts/build_dependencies.sh
+            '
+
+      - save_cache:
+          name: Save tools cache (out/tools)
+          key: v1-un1ca-tools-{{ checksum "external/make.sh" }}-{{ checksum "scripts/utils/build_utils.sh" }}
+          paths:
+            - out/tools
+
+      # --- Firmware download / extract / build ---
+      - run:
+          name: Download stock firmwares (r8q)
+          command: |
+            bash -lc '
+              cd "$SRC_DIR"
+              source ./buildenv.sh r8q
+              ./scripts/download_fw.sh
+            '
+
+      - run:
+          name: Extract stock firmwares (r8q)
+          command: |
+            bash -lc '
+              cd "$SRC_DIR"
+              source ./buildenv.sh r8q
+              ./scripts/extract_fw.sh
+            '
+
+      - run:
+          name: Build ROM (r8q, no zip)
+          command: |
+            bash -lc '
+              cd "$SRC_DIR"
+              source ./buildenv.sh r8q
+              ./scripts/make_rom.sh --no-rom-zip
+            '
+
+      # --- Artifacts ---
+      - store_artifacts:
+          name: Upload build artifacts
+          path: out
+          destination: out
+
+workflows:
+  build-r8q-workflow:
+    jobs:
+      - build-r8q
