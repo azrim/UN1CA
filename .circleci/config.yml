@@ -30,8 +30,8 @@ jobs:
 
             docker run --privileged --rm -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
 
-              # A. Install System Dependencies
-              # REMOVED: libfmt-dev (It installs v10, which breaks the build)
+              # A. Install Dependencies
+              # Note: We REMOVE libfmt-dev to prevent conflicts
               apt-get update && \
               DEBIAN_FRONTEND=noninteractive apt-get install -yq \
                 sudo git curl unzip 7zip attr ccache clang ffmpeg cmake pkg-config \
@@ -42,19 +42,14 @@ jobs:
                 erofs-utils f2fs-tools \
                 liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev && \
 
-              # B. Manually Compile libfmt 9.1.0 (Fixes API compatibility)
-              echo "Compiling libfmt 9.1.0..." && \
-              git clone --depth 1 --branch 9.1.0 https://github.com/fmtlib/fmt.git && \
-              cd fmt && mkdir build && cd build && \
-              cmake -DCMAKE_POSITION_INDEPENDENT_CODE=TRUE -DFMT_TEST=OFF .. && \
-              make -j$(nproc) && \
-              make install && \
-              cd ../.. && rm -rf fmt && \
-
-              # C. Configure Git
+              # B. Configure Git
               git config --global user.name "circleci-bot" && \
               git config --global user.email "bot@example.com" && \
               git config --global --add safe.directory "*" && \
+
+              # C. [CRITICAL FIX] Force the script to use BUNDLED fmt library
+              # This switches the flag from OFF to ON in the build script
+              sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh && \
 
               # D. Build Dependencies
               source ./buildenv.sh r8q && \
