@@ -9,14 +9,12 @@ executors:
       SRC_DIR: /home/circleci/project
 
 jobs:
-  build-r8q:
+  prepare-env:
     executor: vm-builder
     steps:
-      # 1. Restore cache (git submodules + dependencies)
       - restore_cache:
-          key: r8q-cache-{{ .Branch }}-{{ checksum "scripts/build_dependencies.sh" }}
+          key: apt-cache-{{ checksum "apt-packages.txt" }}
 
-      # 2. Fresh checkout
       - run:
           name: Checkout Code
           command: |
@@ -24,29 +22,50 @@ jobs:
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
-            git submodule sync
             git submodule update --init --recursive --depth 1
             git config --global --add safe.directory "*"
 
-      # 3. Pull prebuilt Docker image (already has all deps)
       - run:
-          name: Pull Prebuilt Android Build Image
+          name: Install APT Dependencies (cached)
           command: |
-            docker pull ghcr.io/yourname/android-rom-base:latest
+            docker pull ubuntu:24.04
+            mkdir -p /home/circleci/apt-cache /home/circleci/apt-lib
 
-      # 4. ROM build using prebuilt image
+            docker run --privileged --rm \
+              -v /home/circleci/apt-cache:/var/cache/apt \
+              -v /home/circleci/apt-lib:/var/lib/apt \
+              -v $(pwd):/work -w /work \
+              ubuntu:24.04 bash -c "
+                apt-get update
+                DEBIAN_FRONTEND=noninteractive apt-get install -yq \$(cat apt-packages.txt)
+              "
+
+      - save_cache:
+          key: apt-cache-{{ checksum "apt-packages.txt" }}
+          paths:
+            - /home/circleci/apt-cache
+            - /home/circleci/apt-lib
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - .
+
+  build-rom:
+    executor: vm-builder
+    steps:
+      - attach_workspace:
+          at: .
+
       - run:
-          name: Build ROM (fast)
+          name: Build ROM (fresh run)
           no_output_timeout: 60m
           command: |
             docker run --privileged --rm \
-              -v $(pwd):/work -w /work \
-              ghcr.io/yourname/android-rom-base:latest \
-              bash -c '
+              -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
                 git config --global user.name "circleci-bot"
                 git config --global user.email "bot@example.com"
 
-                # Force bundled fmt
                 sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh
 
                 source ./buildenv.sh r8q
@@ -59,14 +78,12 @@ jobs:
                 chmod -R 777 out/
               '
 
-      # 5. Save cache after dependencies built
+      # this ONLY runs if the job was successful
       - save_cache:
-          key: r8q-cache-{{ .Branch }}-{{ checksum "scripts/build_dependencies.sh" }}
+          key: build-cache-r8q-{{ .Revision }}
           paths:
-            - build/.ccache
-            - .git/modules
+            - out/
 
-      # 6. Extract artifacts
       - run:
           name: Prepare Artifacts
           command: |
@@ -75,11 +92,13 @@ jobs:
             find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
 
       - store_artifacts:
-          name: Upload ROM
           path: /tmp/artifacts
           destination: rom_build
 
 workflows:
   build-r8q-workflow:
     jobs:
-      - build-r8q
+      - prepare-env
+      - build-rom:
+          requires:
+            - prepare-env
