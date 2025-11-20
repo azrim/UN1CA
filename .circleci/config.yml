@@ -1,157 +1,85 @@
 version: 2.1
 
-executors:
-  vm-builder:
-    machine:
-      image: ubuntu-2204:current
+jobs:
+  build:
+    docker:
+      - image: ubuntu:24.04
     resource_class: large
+
     environment:
       DEBIAN_FRONTEND: noninteractive
-      CCACHE_DIR: /home/circleci/.ccache
-      CCACHE_MAXSIZE: 10G
 
-jobs:
-  prepare-env:
-    executor: vm-builder
     steps:
-      # Restore apt + ccache + build caches
-      - restore_cache:
-          key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
-      - restore_cache:
-          key: ccache-{{ .Branch }}
-      - restore_cache:
-          key: incremental-out-{{ .Branch }}-{{ checksum "scripts" }}
+      - checkout
 
       - run:
-          name: Checkout Code
+          name: Free disk space (1/3)
           command: |
-            git clone --depth 1 --branch "$CIRCLE_BRANCH" "$CIRCLE_REPOSITORY_URL" .
-            git submodule sync
-            git submodule update --init --recursive --depth 1
-            git config --global --add safe.directory "*"
+            apt-get update
+            apt-get install -y sudo docker.io
+            sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+            sudo docker image prune --all --force || true
+            sudo docker builder prune -a || true
 
       - run:
-          name: Install Dependencies
+          name: Free disk space (2/3)
           command: |
-            sudo apt-get update
-            grep -Ev '^\s*(#|$)' .circleci/apt-packages.txt | xargs sudo apt-get install -yq
+            echo "Skipping jlumbroso/free-disk-space equivalent (not required on CircleCI)"
 
       - run:
-          name: Initialize ccache
+          name: Free disk space (3/3)
           command: |
-            mkdir -p "$CCACHE_DIR"
-            ccache --set-config=max_size=$CCACHE_MAXSIZE
-            ccache --zero-stats || true
-
-      - save_cache:
-          key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
-          paths:
-            - /var/cache/apt
-            - /var/lib/apt
-
-      - persist_to_workspace:
-          root: .
-          paths:
-            - .
-
-  build-deps:
-    executor: vm-builder
-    steps:
-      - attach_workspace:
-          at: .
+            echo "Skipping slimhub_actions equivalent (CircleCI doesn't need this)"
 
       - run:
-          name: Build Dependencies (ccache enabled)
+          name: Set up build environment
           command: |
+            apt-get update
+            apt-get install -yq \
+              7zip attr ccache clang ffmpeg \
+              libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
+              libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
+              git curl unzip wget python3 python3-venv openjdk-17-jdk
+
+            modprobe erofs || true
+            modprobe f2fs || true
+
             git config --global user.name "circleci-bot"
             git config --global user.email "bot@example.com"
 
-            sed -i 's/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/' scripts/build_dependencies.sh
+            echo "${PLATFORM_KEY_PK8}" | base64 -d > security/unica_platform.pk8
+            echo "${PLATFORM_KEY_PEM}" | base64 -d > security/unica_platform.x509.pem
 
+      - run:
+          name: Build dependencies
+          command: |
             source ./buildenv.sh r8q
-            export CC="ccache clang"
-            export CXX="ccache clang++"
-
             ./scripts/build_dependencies.sh
 
-      - save_cache:
-          key: ccache-{{ .Branch }}
-          paths:
-            - /home/circleci/.ccache
-
-      - persist_to_workspace:
-          root: .
-          paths:
-            - out/deps
-
-  extract-firmware:
-    executor: vm-builder
-    steps:
-      - attach_workspace:
-          at: .
-
       - run:
-          name: Fetch & Extract Firmware
-          command: |
-            ./scripts/download_fw.sh
-            ./scripts/extract_fw.sh
-
-      - persist_to_workspace:
-          root: .
-          paths:
-            - out/firmware
-
-  build-rom:
-    executor: vm-builder
-    steps:
-      - attach_workspace:
-          at: .
-
-      - run:
-          name: Compile ROM (fast, incremental-safe)
-          no_output_timeout: 120m
+          name: Download stock firmware
           command: |
             source ./buildenv.sh r8q
-            export CC="ccache clang"
-            export CXX="ccache clang++"
-
-            # incremental builds restored if safe
-            if [ -d out ] ; then
-              echo "Restoring incremental build output..."
-            else
-              mkdir -p out
-            fi
-
-            ./scripts/make_rom.sh --no-rom-zip
-            chmod -R 777 out/
-
-      - save_cache:
-          key: incremental-out-{{ .Branch }}-{{ checksum "scripts" }}
-          paths:
-            - out/
+            ./scripts/download_fw.sh
 
       - run:
-          name: Prepare Artifacts
+          name: Extract stock firmware
           command: |
-            mkdir -p /tmp/artifacts
-            find out/ -name "*.img" -exec cp {} /tmp/artifacts/ \;
-            find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
+            source ./buildenv.sh r8q
+            ./scripts/extract_fw.sh
+
+      - run:
+          name: Build ROM
+          command: |
+            source ./buildenv.sh r8q
+            ./scripts/make_rom.sh --no-rom-zip
 
       - store_artifacts:
-          path: /tmp/artifacts
-          destination: rom_build
+          path: out/
+          destination: rom_output
 
 workflows:
-  build-r8q-workflow:
+  version: 2
+  build-workflow:
     jobs:
-      - prepare-env
-      - build-deps:
-          requires:
-            - prepare-env
-      - extract-firmware:
-          requires:
-            - prepare-env
-      - build-rom:
-          requires:
-            - build-deps
-            - extract-firmware
+      - build
