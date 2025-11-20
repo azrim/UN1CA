@@ -15,8 +15,6 @@ jobs:
   build-r8q:
     executor: vm-builder
     steps:
-      - checkout
-
       - run:
           name: Checkout Code (Shallow & Fast)
           command: |
