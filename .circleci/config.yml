@@ -3,8 +3,9 @@ version: 2.1
 executors:
   vm-builder:
     machine:
-      # We still use the VM to host the Docker engine and provide Kernel Modules
+      # We use the VM to host the Docker engine and provide Kernel/Mount permissions
       image: ubuntu-2204:current
+    # Downgraded to 'large' to fit standard plans
     resource_class: large
     environment:
       SRC_DIR: /home/circleci/project
@@ -13,77 +14,74 @@ jobs:
   build-r8q:
     executor: vm-builder
     steps:
-      # 1. Host Setup: Checkout Code
+      # 1. Host Setup: Checkout Code (Shallow Clone for Speed)
       - run:
-          name: Checkout Code (Shallow)
+          name: Checkout Code
           command: |
+            # Clean up previous runs
             rm -rf ./* ./.??*
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+            # Clone latest commit only
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
+
+            # Initialize submodules shallowly
             git submodule sync
             git submodule update --init --recursive --depth 1
 
-      # 2. Host Setup: Load Kernel Modules
-      # We must load these on the Host VM so the Docker container can use them.
-      - run:
-          name: Load Kernel Modules (On Host)
-          command: |
-            sudo modprobe erofs || echo "EROFS module missing (might be okay if not used)"
-            sudo modprobe f2fs || echo "F2FS module missing"
-            sudo modprobe loop || true
-
-      # 3. The Magic Step: Run Build inside Ubuntu 24.04 Container
-      # We map the current folder ($(pwd)) to /work inside the container.
-      # We use --privileged so the container can use the host's 'mount' command.
+      # 2. The Build Step: Docker inside VM
+      # We run Ubuntu 24.04 inside the VM to get modern dependencies (Protobuf/Fmt).
+      # We use --privileged so the build script can mount firmware images.
       - run:
           name: Build in Ubuntu 24.04 (Docker)
           no_output_timeout: 60m
           command: |
-            # Pull the image that GitHub Actions uses
             docker pull ubuntu:24.04
 
-            # Run the build script inside the container
-            # We install dependencies INSIDE the container to match GitHub Actions versions
             docker run --privileged --rm -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
 
-              # A. Setup Container Environment
+              # A. Install Dependencies (Ubuntu 24.04 versions)
               apt-get update && \
               DEBIAN_FRONTEND=noninteractive apt-get install -yq \
                 sudo git curl unzip 7zip attr ccache clang ffmpeg \
                 libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
                 libzstd-dev lld protobuf-compiler webp \
                 python3 python3-venv python-is-python3 openjdk-17-jdk \
-                lz4 liblz4-tool aria2 android-sdk-libsparse-utils && \
+                lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
+                erofs-utils f2fs-tools && \
 
-              # B. Configure Git (required for some build scripts)
+              # B. Configure Git (FIXED: Allow all directories to prevent "dubious ownership")
               git config --global user.name "circleci-bot" && \
               git config --global user.email "bot@example.com" && \
-              git config --global --add safe.directory /work && \
+              git config --global --add safe.directory "*" && \
 
-              # C. Build Dependencies (This will now use the CORRECT libprotobuf/fmt)
+              # C. Build Dependencies
               source ./buildenv.sh r8q && \
               ./scripts/build_dependencies.sh && \
 
-              # D. Download & Extract
+              # D. Download & Extract Firmware
               ./scripts/download_fw.sh && \
               ./scripts/extract_fw.sh && \
 
-              # E. Make ROM
+              # E. Compile ROM
               ./scripts/make_rom.sh --no-rom-zip && \
 
-              # F. Cleanup permissions so CircleCI can upload artifacts
+              # F. Fix permissions so the Host VM can read the output files
               chmod -R 777 out/
             '
 
-      # 4. Artifacts
+      # 3. Artifacts: Prepare files for upload
       - run:
           name: Prepare Artifacts
           command: |
             mkdir -p /tmp/artifacts
+            # Copy images (system.img, etc.)
             find out/ -name "*.img" -exec cp {} /tmp/artifacts/ \;
+            # Copy zip if it exists (ignore error if not)
             find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
 
+      # 4. Upload to CircleCI
       - store_artifacts:
           name: Upload ROM
           path: /tmp/artifacts
