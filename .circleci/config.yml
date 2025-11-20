@@ -34,7 +34,7 @@ jobs:
           name: Install Dependencies
           command: |
             sudo apt-get update
-            xargs -a .circleci/apt-packages.txt sudo apt-get install -yq
+            grep -Ev '^\s*(#|$)' .circleci/apt-packages.txt | xargs sudo apt-get install -yq
 
       - run:
           name: Initialize ccache

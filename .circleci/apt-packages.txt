@@ -12,35 +12,35 @@ file
 zip
 zstd
 
-# Compilers & build system
+# Build system
 clang
 lld
 cmake
 pkg-config
 ccache
 
-# Languages & runtimes
+# Runtime and languages
 python3
 python3-venv
 python-is-python3
 openjdk-17-jdk
 
-# Compression / filesystem tools
+# Compression / fs
 lz4
 liblz4-tool
 liblz4-dev
 zlib1g-dev
 
-# Multimedia utils
+# Media tools
 ffmpeg
 libwebp-dev
 
-# Protocol buffers
+# Protobuf
 protobuf-compiler
 libprotobuf-dev
 libgtest-dev
 
-# Crypto, USB, misc libs
+# Crypto & misc
 libssl-dev
 libusb-1.0-0-dev
 libunwind-dev
@@ -48,7 +48,7 @@ libpcre2-dev
 libbrotli-dev
 libzstd-dev
 
-# Android ROM specific
+# Android build utils
 android-sdk-libsparse-utils
 erofs-utils
 f2fs-tools
