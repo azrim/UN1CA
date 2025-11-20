@@ -24,7 +24,7 @@ jobs:
             git submodule update --init --recursive
 
       # --- Dependencies ---
-      - - run:
+      - run:
           name: Install System Dependencies
           command: |
             sudo apt-get update
