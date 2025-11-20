@@ -3,9 +3,7 @@ version: 2.1
 executors:
   vm-builder:
     machine:
-      # We use the VM to host the Docker engine and provide Kernel/Mount permissions
       image: ubuntu-2204:current
-    # Downgraded to 'large' to fit standard plans
     resource_class: large
     environment:
       SRC_DIR: /home/circleci/project
@@ -14,25 +12,16 @@ jobs:
   build-r8q:
     executor: vm-builder
     steps:
-      # 1. Host Setup: Checkout Code (Shallow Clone for Speed)
       - run:
           name: Checkout Code
           command: |
-            # Clean up previous runs
             rm -rf ./* ./.??*
             mkdir -p ~/.ssh
             ssh-keyscan github.com >> ~/.ssh/known_hosts
-
-            # Clone latest commit only
             git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
-
-            # Initialize submodules shallowly
             git submodule sync
             git submodule update --init --recursive --depth 1
 
-      # 2. The Build Step: Docker inside VM
-      # We run Ubuntu 24.04 inside the VM to get modern dependencies (Protobuf/Fmt).
-      # We use --privileged so the build script can mount firmware images.
       - run:
           name: Build in Ubuntu 24.04 (Docker)
           no_output_timeout: 60m
@@ -41,17 +30,18 @@ jobs:
 
             docker run --privileged --rm -v $(pwd):/work -w /work ubuntu:24.04 bash -c '
 
-              # A. Install Dependencies (Ubuntu 24.04 versions)
+              # A. Install Dependencies
+              # Added "cmake" to the list below
               apt-get update && \
               DEBIAN_FRONTEND=noninteractive apt-get install -yq \
-                sudo git curl unzip 7zip attr ccache clang ffmpeg \
+                sudo git curl unzip 7zip attr ccache clang ffmpeg cmake \
                 libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
                 libzstd-dev lld protobuf-compiler webp \
                 python3 python3-venv python-is-python3 openjdk-17-jdk \
                 lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
                 erofs-utils f2fs-tools && \
 
-              # B. Configure Git (FIXED: Allow all directories to prevent "dubious ownership")
+              # B. Configure Git
               git config --global user.name "circleci-bot" && \
               git config --global user.email "bot@example.com" && \
               git config --global --add safe.directory "*" && \
@@ -67,21 +57,17 @@ jobs:
               # E. Compile ROM
               ./scripts/make_rom.sh --no-rom-zip && \
 
-              # F. Fix permissions so the Host VM can read the output files
+              # F. Fix permissions
               chmod -R 777 out/
             '
 
-      # 3. Artifacts: Prepare files for upload
       - run:
           name: Prepare Artifacts
           command: |
             mkdir -p /tmp/artifacts
-            # Copy images (system.img, etc.)
             find out/ -name "*.img" -exec cp {} /tmp/artifacts/ \;
-            # Copy zip if it exists (ignore error if not)
             find out/ -name "*.zip" -exec cp {} /tmp/artifacts/ \; || true
 
-      # 4. Upload to CircleCI
       - store_artifacts:
           name: Upload ROM
           path: /tmp/artifacts
