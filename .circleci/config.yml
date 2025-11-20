@@ -24,17 +24,17 @@ jobs:
             git submodule update --init --recursive
 
       # --- Dependencies ---
-      - run:
+      - - run:
           name: Install System Dependencies
           command: |
             sudo apt-get update
-            # Installing python-is-python3 and lz4 is critical for Samsung builds
             DEBIAN_FRONTEND=noninteractive sudo apt-get install -yq \
               7zip attr ccache clang ffmpeg git curl unzip \
               libbrotli-dev libgtest-dev libprotobuf-dev libunwind-dev libpcre2-dev \
               libzstd-dev linux-modules-extra-$(uname -r) lld protobuf-compiler webp \
               python3 python3-venv python-is-python3 openjdk-17-jdk \
-              lz4 liblz4-tool aria2 android-sdk-libsparse-utils
+              lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
+              libfmt-dev
 
       # --- Kernel Modules ---
       - run:
