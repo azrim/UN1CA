@@ -4,45 +4,102 @@ executors:
   vm-builder:
     machine:
       image: ubuntu-2204:current
-    resource_class: large
+    resource_class: xlarge
     environment:
-      SRC_DIR: /home/circleci/project
       DEBIAN_FRONTEND: noninteractive
+      CCACHE_DIR: /home/circleci/.ccache
+      CCACHE_MAXSIZE: 10G
 
 jobs:
   prepare-env:
     executor: vm-builder
     steps:
-      # Restore apt cache
+      # Restore apt + ccache + build caches
       - restore_cache:
           key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
+      - restore_cache:
+          key: ccache-{{ .Branch }}
+      - restore_cache:
+          key: incremental-out-{{ .Branch }}-{{ checksum "scripts" }}
 
       - run:
-          name: Checkout Code (clean but keep tracked files)
+          name: Checkout Code
           command: |
-            git clone --depth 1 --branch $CIRCLE_BRANCH $CIRCLE_REPOSITORY_URL .
+            git clone --depth 1 --branch "$CIRCLE_BRANCH" "$CIRCLE_REPOSITORY_URL" .
             git submodule sync
             git submodule update --init --recursive --depth 1
             git config --global --add safe.directory "*"
 
       - run:
-          name: Install APT Dependencies on Machine
+          name: Install Dependencies
           command: |
             sudo apt-get update
             xargs -a .circleci/apt-packages.txt sudo apt-get install -yq
 
-      # Apt cache saved ONLY if apt install succeeded
+      - run:
+          name: Initialize ccache
+          command: |
+            mkdir -p "$CCACHE_DIR"
+            ccache --set-config=max_size=$CCACHE_MAXSIZE
+            ccache --zero-stats || true
+
       - save_cache:
           key: apt-cache-{{ checksum ".circleci/apt-packages.txt" }}
           paths:
             - /var/cache/apt
             - /var/lib/apt
 
-      # Persist entire workspace to next job
       - persist_to_workspace:
           root: .
           paths:
             - .
+
+  build-deps:
+    executor: vm-builder
+    steps:
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Build Dependencies (ccache enabled)
+          command: |
+            git config --global user.name "circleci-bot"
+            git config --global user.email "bot@example.com"
+
+            sed -i 's/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/' scripts/build_dependencies.sh
+
+            source ./buildenv.sh r8q
+            export CC="ccache clang"
+            export CXX="ccache clang++"
+
+            ./scripts/build_dependencies.sh
+
+      - save_cache:
+          key: ccache-{{ .Branch }}
+          paths:
+            - /home/circleci/.ccache
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - out/deps
+
+  extract-firmware:
+    executor: vm-builder
+    steps:
+      - attach_workspace:
+          at: .
+
+      - run:
+          name: Fetch & Extract Firmware
+          command: |
+            ./scripts/download_fw.sh
+            ./scripts/extract_fw.sh
+
+      - persist_to_workspace:
+          root: .
+          paths:
+            - out/firmware
 
   build-rom:
     executor: vm-builder
@@ -51,26 +108,25 @@ jobs:
           at: .
 
       - run:
-          name: Setup Environment
+          name: Compile ROM (fast, incremental-safe)
+          no_output_timeout: 120m
           command: |
-            git config --global user.name "circleci-bot"
-            git config --global user.email "bot@example.com"
-            sed -i "s/ANDROID_TOOLS_USE_BUNDLED_FMT=OFF/ANDROID_TOOLS_USE_BUNDLED_FMT=ON/g" scripts/build_dependencies.sh
             source ./buildenv.sh r8q
+            export CC="ccache clang"
+            export CXX="ccache clang++"
 
-      - run:
-          name: Build ROM (Fresh)
-          no_output_timeout: 90m
-          command: |
-            ./scripts/build_dependencies.sh
-            ./scripts/download_fw.sh
-            ./scripts/extract_fw.sh
+            # incremental builds restored if safe
+            if [ -d out ] ; then
+              echo "Restoring incremental build output..."
+            else
+              mkdir -p out
+            fi
+
             ./scripts/make_rom.sh --no-rom-zip
             chmod -R 777 out/
 
-      # This only saves if ROM build succeeds
       - save_cache:
-          key: build-cache-{{ .Revision }}
+          key: incremental-out-{{ .Branch }}-{{ checksum "scripts" }}
           paths:
             - out/
 
@@ -89,6 +145,13 @@ workflows:
   build-r8q-workflow:
     jobs:
       - prepare-env
-      - build-rom:
+      - build-deps:
           requires:
             - prepare-env
+      - extract-firmware:
+          requires:
+            - prepare-env
+      - build-rom:
+          requires:
+            - build-deps
+            - extract-firmware

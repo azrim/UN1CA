@@ -1,3 +1,4 @@
+# Core tools
 sudo
 git
 curl
@@ -5,38 +6,50 @@ unzip
 p7zip-full
 bc
 attr
-ccache
+rsync
+make
+file
+zip
+zstd
+
+# Compilers & build system
 clang
-ffmpeg
+lld
 cmake
 pkg-config
-libbrotli-dev
-libgtest-dev
-libprotobuf-dev
-libunwind-dev
-libpcre2-dev
-libzstd-dev
-lld
-protobuf-compiler
-webp
+ccache
+
+# Languages & runtimes
 python3
 python3-venv
 python-is-python3
 openjdk-17-jdk
+
+# Compression / filesystem tools
 lz4
 liblz4-tool
-aria2
+liblz4-dev
+zlib1g-dev
+
+# Multimedia utils
+ffmpeg
+libwebp-dev
+
+# Protocol buffers
+protobuf-compiler
+libprotobuf-dev
+libgtest-dev
+
+# Crypto, USB, misc libs
+libssl-dev
+libusb-1.0-0-dev
+libunwind-dev
+libpcre2-dev
+libbrotli-dev
+libzstd-dev
+
+# Android ROM specific
 android-sdk-libsparse-utils
 erofs-utils
 f2fs-tools
-liblz4-dev
-libusb-1.0-0-dev
-libssl-dev
-zlib1g-dev
-rsync
-xxd
-zip
-zstd
-file
-getfattr
-make
+aria2
