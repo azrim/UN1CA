@@ -44,6 +44,13 @@ jobs:
               lz4 liblz4-tool aria2 android-sdk-libsparse-utils \
               libfmt-dev liblz4-dev libusb-1.0-0-dev libssl-dev zlib1g-dev
 
+            # Hack to fix "proto3 optional fields" error on Ubuntu 22.04
+            # We rename the real compiler and create a wrapper that always adds the required flag
+            sudo mv /usr/bin/protoc /usr/bin/protoc.real
+            echo '#!/bin/bash' | sudo tee /usr/bin/protoc
+            echo 'exec /usr/bin/protoc.real --experimental_allow_proto3_optional "$@"' | sudo tee -a /usr/bin/protoc
+            sudo chmod +x /usr/bin/protoc
+
       # --- Kernel Modules ---
       - run:
           name: Load Filesystem Modules
